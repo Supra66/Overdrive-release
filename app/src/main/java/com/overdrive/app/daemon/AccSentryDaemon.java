@@ -6345,7 +6345,21 @@ public class AccSentryDaemon {
     private static int readPowerLevel() {
         if (appContext == null) return -1;
         try {
-            if (!com.overdrive.app.monitor.AccMonitor.isAccOn()) {
+            // DiLink 5.0's legacy bodywork HAL is stuck at POWER_LEVEL_ON(2) even
+            // when the car is off, which kept CameraDaemon out of standby — so a
+            // known-good AccMonitor state must win over the HAL there (armMode
+            // "power"). But AccMonitor.isAccOn() defaults to false, and
+            // isAccStateAuthoritative() is documented as: a false state that is NOT
+            // authoritative must NOT be read as "ACC is OFF" — it could be either.
+            // Without that gate this returns a fabricated OFF that never touched the
+            // hardware, which then overrides the bodywork listener's correct ON
+            // (see applyPowerLevelQueryResult) and self-latches: OFF is published,
+            // AccMonitor stays false, the HAL is never consulted again. On DiLink 3.0
+            // nothing makes AccMonitor authoritative in this daemon's process, so the
+            // latch was permanent — sentry mode held while driving, blanking the
+            // backlight and flapping ACC once a minute.
+            if (com.overdrive.app.monitor.AccMonitor.isAccStateAuthoritative()
+                    && !com.overdrive.app.monitor.AccMonitor.isAccOn()) {
                 return POWER_LEVEL_OFF;
             }
         } catch (Throwable ignored) {}
