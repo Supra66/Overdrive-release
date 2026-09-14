@@ -1,0 +1,190 @@
+diff --git a/ipn/ipnauth/ipnauth.go b/ipn/ipnauth/ipnauth.go
+index d48ec1f..2c5ec60 100644
+--- a/ipn/ipnauth/ipnauth.go
++++ b/ipn/ipnauth/ipnauth.go
+@@ -106,6 +106,30 @@ func (ci *ConnIdentity) WindowsUserID() ipn.WindowsUserID {
+ 
+ func (ci *ConnIdentity) Pid() int         { return ci.pid }
+ func (ci *ConnIdentity) IsUnixSock() bool { return ci.isUnixSock }
++
++// IsLoopbackTCP reports whether the connection is a TCP connection whose peer is
++// on the loopback interface.
++//
++// The local API normally lives on a unix socket, and the whole permission model
++// below leans on that: peer credentials identify the caller, and a non-unix
++// connection gets no access at all. On Android there is no usable unix socket —
++// tailscaled runs as the shell uid while its clients run as app uids, and no
++// directory is both shell-writable and app-readable — so the local API is bound
++// to loopback TCP instead (see safesocket).
++//
++// Loopback TCP carries no peer credentials, so it cannot be identified the same
++// way. It is instead trusted on the same basis the unix socket is: reaching it
++// at all requires already being a local process on the device. That is a real
++// widening — any local process that can open 127.0.0.1:<port> gets full control
++// of tailscaled, where the unix socket would have restricted it by uid. It is
++// inherent to putting the local API on TCP, not something added here.
++func (ci *ConnIdentity) IsLoopbackTCP() bool {
++	if ci.conn == nil {
++		return false
++	}
++	a, ok := ci.conn.RemoteAddr().(*net.TCPAddr)
++	return ok && a.IP.IsLoopback()
++}
+ func (ci *ConnIdentity) Creds() PeerCreds { return ci.creds }
+ 
+ // PeerCreds is the interface for a github.com/tailscale/peercred.Creds,
+@@ -176,6 +200,15 @@ func (ci *ConnIdentity) IsReadonlyConn(operatorUID string, logf logger.Logf) boo
+ 	}
+ 	creds := ci.creds
+ 	if creds == nil {
++		// A loopback TCP local-API connection never has peer credentials; see
++		// IsLoopbackTCP. Falling through to read-only here would leave the API
++		// reachable but unable to do anything -- `status` would work and
++		// `serve` would not -- which is worse than either allowing or refusing
++		// outright, because it fails deep inside an operation that looked
++		// permitted. Trust it on the same local-process basis as the socket.
++		if ci.IsLoopbackTCP() {
++			return rw
++		}
+ 		logf("connection from unknown peer; read-only")
+ 		return ro
+ 	}
+diff --git a/ipn/ipnauth/ipnauth_unix_creds.go b/ipn/ipnauth/ipnauth_unix_creds.go
+index d031d3b..0735201 100644
+--- a/ipn/ipnauth/ipnauth_unix_creds.go
++++ b/ipn/ipnauth/ipnauth_unix_creds.go
+@@ -18,6 +18,14 @@
+ func GetConnIdentity(_ logger.Logf, c net.Conn) (ci *ConnIdentity, err error) {
+ 	ci = &ConnIdentity{conn: c, notWindows: true}
+ 	_, ci.isUnixSock = c.(*net.UnixConn)
++	// The local API is on loopback TCP where no unix socket is usable (Android;
++	// see ConnIdentity.IsLoopbackTCP). peercred.Get would fail on such a conn and
++	// reject the client outright, so take the local-socket path instead: it is
++	// the same trust decision, reached over a different transport.
++	if !ci.isUnixSock && ci.IsLoopbackTCP() {
++		ci.isUnixSock = true
++		return ci, nil
++	}
+ 	if creds, err := peercred.Get(c); err == nil {
+ 		ci.creds = creds
+ 		ci.pid, _ = ci.creds.PID()
+diff --git a/ipn/ipnlocal/cert.go b/ipn/ipnlocal/cert.go
+index efab9db..3562ea0 100644
+--- a/ipn/ipnlocal/cert.go
++++ b/ipn/ipnlocal/cert.go
+@@ -797,9 +797,60 @@ func acmeClient(cs certStore) (*acme.Client, error) {
+ 		Key:          key,
+ 		UserAgent:    "tailscaled/" + version.Long(),
+ 		DirectoryURL: envknob.String("TS_DEBUG_ACME_DIRECTORY_URL"),
++		HTTPClient:   acmeHTTPClient(),
+ 	}, nil
+ }
+ 
++// acmeFallbackResolvers are queried only when the platform exposes no resolver
++// configuration at all. Overridable with TS_ACME_DNS (comma-separated host:port).
++var acmeFallbackResolvers = []string{"1.1.1.1:53", "8.8.8.8:53"}
++
++// acmeHTTPClient returns the HTTP client for ACME, or nil to use the default.
++//
++// Android has no /etc/resolv.conf. A cgo-free build therefore has nothing to
++// configure Go's pure resolver from, and it falls back to 127.0.0.1:53 where
++// nothing is listening — every lookup fails with "connection refused". Reaching
++// the control plane still works, because that path has bootstrap DNS with
++// hardcoded addresses; an arbitrary host like the ACME directory does not. The
++// visible result is a cert fetch that fails at DNS, so `serve --https` publishes
++// a URL whose TLS handshake dies with an internal error.
++//
++// Only take over when there is genuinely no resolver config: if /etc/resolv.conf
++// exists, the platform can resolve for itself and nothing here should interfere.
++func acmeHTTPClient() *http.Client {
++	if _, err := os.Stat("/etc/resolv.conf"); err == nil {
++		return nil // platform resolver is configured; leave it alone
++	}
++	servers := acmeFallbackResolvers
++	if s := envknob.String("TS_ACME_DNS"); s != "" {
++		servers = strings.Split(s, ",")
++	}
++	r := &net.Resolver{
++		PreferGo: true,
++		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
++			var d net.Dialer
++			var firstErr error
++			for _, s := range servers {
++				c, err := d.DialContext(ctx, network, strings.TrimSpace(s))
++				if err == nil {
++					return c, nil
++				}
++				if firstErr == nil {
++					firstErr = err
++				}
++			}
++			return nil, firstErr
++		},
++	}
++	return &http.Client{
++		Transport: &http.Transport{
++			Proxy:             http.ProxyFromEnvironment,
++			DialContext:       (&net.Dialer{Timeout: 30 * time.Second, Resolver: r}).DialContext,
++			ForceAttemptHTTP2: true,
++		},
++	}
++}
++
+ // validCertPEM reports whether the given certificate is valid for domain at now.
+ //
+ // If roots != nil, it is used instead of the system root pool. This is meant
+diff --git a/safesocket/unixsocket.go b/safesocket/unixsocket.go
+index 6fe3883..88acd35 100644
+--- a/safesocket/unixsocket.go
++++ b/safesocket/unixsocket.go
+@@ -14,14 +14,50 @@
+ 	"os/exec"
+ 	"path/filepath"
+ 	"runtime"
++	"strconv"
++	"strings"
+ )
+ 
++// tcpAddr reports whether path names a loopback TCP address ("host:port")
++// rather than a filesystem path for a unix socket.
++//
++// Android needs this. tailscaled runs there as the shell uid while its clients
++// live in an app uid, and a unix socket in a shell-writable directory is not
++// reachable across that boundary — an app uid cannot open /data/local/tmp/...
++// So the daemon and CLI address each other over loopback TCP instead.
++//
++// A filesystem path is anything rooted at / or . — checked first, so a path
++// that happens to contain a colon is never mistaken for an address. Everything
++// else must parse as host:port with a numeric port.
++func tcpAddr(path string) (string, bool) {
++	if path == "" || strings.HasPrefix(path, "/") || strings.HasPrefix(path, ".") {
++		return "", false
++	}
++	host, port, err := net.SplitHostPort(path)
++	if err != nil || host == "" || port == "" {
++		return "", false
++	}
++	if _, err := strconv.Atoi(port); err != nil {
++		return "", false
++	}
++	return path, true
++}
++
+ func connect(ctx context.Context, path string) (net.Conn, error) {
+ 	var std net.Dialer
++	if addr, ok := tcpAddr(path); ok {
++		return std.DialContext(ctx, "tcp", addr)
++	}
+ 	return std.DialContext(ctx, "unix", path)
+ }
+ 
+ func listen(path string) (net.Listener, error) {
++	// TCP has none of the stale-socket problem described below: the kernel
++	// releases the port when the listener goes away, so bind directly and let
++	// it fail loudly if something else already holds the port.
++	if addr, ok := tcpAddr(path); ok {
++		return net.Listen("tcp", addr)
++	}
+ 	// Unix sockets hang around in the filesystem even after nobody
+ 	// is listening on them. (Which is really unfortunate but long-
+ 	// entrenched semantics.) Try connecting first; if it works, then

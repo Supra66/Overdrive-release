@@ -133,6 +133,11 @@
     <string name="tailscale_qr_waiting">Waiting for login URL…</string>
     <string name="tailscale_enable_proxy">Enable Tailscale Proxy</string>
     <string name="tailscale_proxy_explainer">Routes MQTT through Tailscale so you can reach a private broker on your tailnet without port forwarding.</string>
+    <string name="tailscale_enable_https">Serve over HTTPS on Tailscale</string>
+    <string name="tailscale_https_explainer">Publishes this head unit at https://&lt;name&gt;.ts.net with a real certificate, so browsers treat it as a secure origin. Push notifications, cabin audio, installing as an app and the faster camera decoder all need one. Requires MagicDNS and HTTPS Certificates to be enabled for your tailnet.</string>
+    <string name="toast_tailscale_https_enabled">Serving over HTTPS on tailnet</string>
+    <string name="toast_tailscale_https_disabled">HTTPS serving disabled</string>
+    <string name="toast_tailscale_https_save_failed">Failed to change HTTPS setting — check that HTTPS Certificates are enabled for your tailnet</string>
     <string name="tailscale_enable_adb">Allow remote ADB over Tailscale</string>
     <string name="tailscale_adb_explainer">Adds tailnet reach for ADB (not the public internet). Any tailnet device with an authorised ADB key gets full shell access to this head unit. Note ADB already accepts connections from the local network — turning this off does not close that.</string>
     <string name="tailscale_adb_endpoint">adb connect %1$s</string>

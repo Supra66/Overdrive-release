@@ -12,7 +12,7 @@ own license — those licenses, not MIT, govern those components.
 | cloudflared | https://github.com/cloudflare/cloudflared | based on 2025.7.0 | Apache-2.0 | **Yes** — see "Modifications" below |
 | zrok | https://github.com/openziti/zrok | based on v1.1.x | Apache-2.0 | **Yes** — see "Modifications" below |
 | sing-box | https://github.com/SagerNet/sing-box | see upstream | **GPL-3.0-or-later** | No |
-| tailscale | https://github.com/tailscale/tailscale | see upstream | BSD-3-Clause | No |
+| tailscale | https://github.com/tailscale/tailscale | v1.96.4 | BSD-3-Clause | **Yes** — see "Modifications" below |
 
 ## Machine-learning models (`app/src/main/assets/models/`)
 
@@ -38,6 +38,15 @@ The following components were modified from their upstream sources:
 - **zrok** — added a SOCKS5 proxy and DNS override path for Android / restricted
   networks, selected via the `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` environment
   variables (`cmd/zrok/main.go`).
+- **tailscale** — two changes, both needed to run on an Android head unit.
+  (1) The local API speaks loopback TCP instead of a unix socket
+  (`safesocket/unixsocket.go`, `ipn/ipnauth/*`): tailscaled runs as the shell uid
+  here while its clients run as app uids, and no directory is both shell-writable
+  and app-readable. (2) The ACME client is given a resolver when the platform
+  provides none (`ipn/ipnlocal/cert.go`): Android has no `/etc/resolv.conf`, so a
+  cgo-free build cannot resolve the ACME directory and certificate issuance fails.
+  Both are kept in `tools/patches/tailscale-tcp-socket.patch` and applied by
+  `tools/build-libtailscale.sh`, which also records the build tags and target.
 
 ## Source-derived work
 

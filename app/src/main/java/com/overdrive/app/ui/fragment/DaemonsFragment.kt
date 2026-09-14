@@ -267,6 +267,7 @@ class DaemonsFragment : Fragment() {
             val qrCodeImage = dialogView.findViewById<ImageView>(R.id.qrCodeImage)
             val proxySwitch = dialogView.findViewById<SwitchMaterial>(R.id.switchTailscaleProxy)
             val adbSwitch = dialogView.findViewById<SwitchMaterial>(R.id.switchTailscaleAdb)
+            val httpsSwitch = dialogView.findViewById<SwitchMaterial>(R.id.switchTailscaleHttps)
             val adbEndpoint = dialogView.findViewById<TextView>(R.id.tailscaleAdbEndpoint)
 
             daemonsViewModel.tailscaleController.isProxyEnabled { isEnabled ->
@@ -278,6 +279,12 @@ class DaemonsFragment : Fragment() {
             daemonsViewModel.tailscaleController.isAdbEnabled { isEnabled ->
                 activity?.runOnUiThread {
                     adbSwitch.isChecked = isEnabled
+                }
+            }
+
+            daemonsViewModel.tailscaleController.isHttpsEnabled { isEnabled ->
+                activity?.runOnUiThread {
+                    httpsSwitch.isChecked = isEnabled
                 }
             }
 
@@ -345,6 +352,18 @@ class DaemonsFragment : Fragment() {
                 .setPositiveButton(getString(R.string.dialog_save)) { _, _ ->
                     val enableProxy = proxySwitch.isChecked
                     val enableAdb = adbSwitch.isChecked
+                    val enableHttps = httpsSwitch.isChecked
+
+                    // Settled on its own, outside the ADB/proxy chain: it only
+                    // ever raises a toast, so it cannot stack a dialog on top of
+                    // theirs. Publishing the web UI over TLS exposes nothing the
+                    // tailnet address does not already expose over plain HTTP,
+                    // so unlike remote ADB it needs no confirmation.
+                    daemonsViewModel.tailscaleController.isHttpsEnabled { httpsWasEnabled ->
+                        activity?.runOnUiThread {
+                            if (enableHttps != httpsWasEnabled) saveTailscaleHttpsSettings(enableHttps)
+                        }
+                    }
                     // Settle the ADB toggle first, then the proxy. Both are
                     // independent and each only acts on a real change; the proxy
                     // step is deferred until any ADB confirm is dismissed so the
@@ -422,6 +441,34 @@ class DaemonsFragment : Fragment() {
                 val msg = if (enabled) R.string.toast_tailscale_adb_enabled
                           else R.string.toast_tailscale_adb_disabled
                 Toast.makeText(ctx, getString(msg), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveTailscaleHttpsSettings(enabled: Boolean) {
+        daemonsViewModel.tailscaleController.saveHttpsSettings(enabled) { saved ->
+            activity?.runOnUiThread {
+                val ctx = context ?: return@runOnUiThread
+                if (!saved) {
+                    // Almost always the tailnet lacking HTTPS Certificates, which
+                    // only the admin console can fix — so the toast says so rather
+                    // than reporting a bare failure.
+                    Toast.makeText(ctx, getString(R.string.toast_tailscale_https_save_failed), Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val msg = if (enabled) R.string.toast_tailscale_https_enabled
+                          else R.string.toast_tailscale_https_disabled
+                Toast.makeText(ctx, getString(msg), Toast.LENGTH_SHORT).show()
+
+                // Push the URL through now that the share is live/withdrawn.
+                // getTunnelUrl prefers the served https:// URL and falls back to the
+                // plain tailnet address, so this flips the connect URL and the
+                // dashboard remote-access QR (which observes tunnelUrl) to match the
+                // new state at once. Without it the QR keeps showing the old scheme
+                // until the next ~30s daemon-status poll — and on enable that stale
+                // URL is plain HTTP, which lacks the secure context (camera, QR
+                // pairing, service worker) that HTTPS was turned on to provide.
+                daemonsViewModel.tailscaleController.refreshTunnelUrl()
             }
         }
     }

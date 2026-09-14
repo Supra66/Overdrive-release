@@ -38,6 +38,11 @@ class TailscaleLauncher(
         private const val TAILSCALE_ADB_FILE = "$TAILSCALE_HOME/adb_enabled"
         private const val ADB_PORT = "5555"
 
+        // HTTPS opt-in sentinel and the local port the web server listens on.
+        // Same sentinel-file pattern as the two flags above.
+        private const val TAILSCALE_HTTPS_FILE = "$TAILSCALE_HOME/https_enabled"
+        private const val HTTP_PORT = "8080"
+
         // Retries after the initial replay attempt, ~2s apart — covers a slow
         // tailscaled cold start without spinning if serve is genuinely broken.
         private const val ADB_SERVE_REPLAY_ATTEMPTS = 3
@@ -50,6 +55,12 @@ class TailscaleLauncher(
 
         // Daemon thread: only ever holds short retry tasks, and must not keep the
         // JVM alive. Shared across instances — replays are idempotent.
+        // First https:// host in `serve status`, e.g. https://od.tail1234.ts.net.
+        // The optional port matters: without it a share on a non-default port
+        // would be reported as a bare host and point at 443, which is not what
+        // is listening.
+        private val SERVED_HTTPS_URL = Regex("https://[A-Za-z0-9._-]+(?::\\d+)?")
+
         private val replayScheduler: java.util.concurrent.ScheduledExecutorService =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "TailscaleAdbReplay").apply { isDaemon = true }
@@ -120,12 +131,17 @@ class TailscaleLauncher(
                     logManager.info(TAG, "Tailscale daemon started")
                     callback.onLog("Tailscale daemon started")
                     // serve config lives in tailscaled, so a restart drops it —
-                    // replay the persisted opt-in or remote ADB dies silently.
+                    // replay the persisted opt-ins or remote ADB and the HTTPS
+                    // share both die silently. The URL is read last, so it
+                    // reflects the share this start has just re-published.
                     isAdbEnabled { adbOn ->
                         if (adbOn) replayAdbServe(0)
-                        getTunnelUrl { url ->
-                            callback.onLog("Connect to tailscale to access $url")
-                            callback.onTunnelUrl(url)
+                        isHttpsEnabled { httpsOn ->
+                            if (httpsOn) replayHttpsServe(0)
+                            getTunnelUrl { url ->
+                                callback.onLog("Connect to tailscale to access $url")
+                                callback.onTunnelUrl(url)
+                            }
                         }
                     }
                 }
@@ -332,6 +348,196 @@ class TailscaleLauncher(
                 override fun onError(error: String) {
                     logManager.warn(TAG, "serve --tcp off failed: $error")
                     callback?.invoke(false)
+                }
+            }
+        )
+    }
+
+    /**
+     * Publish the web server over HTTPS on the tailnet via `tailscale serve`.
+     *
+     * tailscaled terminates TLS with a real Let's Encrypt certificate for the
+     * node's MagicDNS name and proxies into the local HTTP port, so clients get
+     * a genuinely trusted `https://<host>.<tailnet>.ts.net` with no certificate
+     * to install and no port forwarding.
+     *
+     * That matters beyond neatness: a browser treats the plain-HTTP endpoint as
+     * an insecure context, which switches off APIs this app's own web UI uses.
+     * notifications.html already disables its controls on an insecure origin;
+     * pwa-init.js cannot register /sw.js, so there is no install and no push;
+     * communicate.js and genai.js lose getUserMedia for cabin audio and voice;
+     * and stream.js falls back off the WebCodecs decode path. Served over this
+     * URL, all of them work as they do on 127.0.0.1.
+     *
+     * Requires MagicDNS and HTTPS Certificates to be enabled for the tailnet;
+     * without them tailscaled refuses and the error is surfaced to the caller
+     * rather than swallowed, since there is nothing the head unit can do about
+     * it and the user has to change it in the admin console.
+     */
+    fun applyHttpsServe(enabled: Boolean, callback: ((Boolean) -> Unit)? = null) {
+        if (enabled) {
+            runTailscaleCommand(
+                cmd = "serve --bg $HTTP_PORT",
+                callback = object : AdbShellExecutor.ShellCallback {
+                    override fun onSuccess(output: String) {
+                        logManager.info(TAG, "web UI published over HTTPS on tailnet")
+                        callback?.invoke(true)
+                    }
+                    override fun onError(error: String) {
+                        // Nearly always "HTTPS must be enabled in the admin console".
+                        logManager.warn(TAG, "serve --bg $HTTP_PORT failed: $error")
+                        callback?.invoke(false)
+                    }
+                }
+            )
+            return
+        }
+        // Withdraw only the HTTPS share, and only the handler we created.
+        //
+        // Never `serve reset`: that drops the whole serve config including the
+        // --tcp forwarder remote ADB depends on.
+        //
+        // Scoped to --set-path=/ as well as the port, because `serve --bg $PORT`
+        // publishes at 443 on path / — so / is precisely what we own. Turning off
+        // 443 alone is a broader statement than we are entitled to make: anything
+        // else mounted under another path on 443 would go with it, and this runs
+        // on a head unit whose serve config we do not exclusively control.
+        runTailscaleCommand(
+            cmd = "serve --https=443 --set-path=/ off",
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    logManager.info(TAG, "web UI withdrawn from tailnet HTTPS")
+                    callback?.invoke(true)
+                }
+                override fun onError(error: String) {
+                    logManager.warn(TAG, "serve --https=443 --set-path=/ off failed: $error")
+                    callback?.invoke(false)
+                }
+            }
+        )
+    }
+
+    /**
+     * Replay the HTTPS share after a daemon start, on the same ladder as remote
+     * ADB: serve config lives in tailscaled, so a restart drops it, and the
+     * launch shell returns as soon as `nohup ... &` forks — the first attempt
+     * can beat the daemon binding its socket.
+     */
+    private fun replayHttpsServe(attempt: Int) {
+        // Re-read the opt-in before EVERY attempt, so a user who switches it off
+        // inside the retry window is not re-published by a later attempt.
+        isHttpsEnabled { stillEnabled ->
+            if (!stillEnabled) {
+                logManager.info(TAG, "HTTPS replay aborted — opt-in withdrawn")
+                return@isHttpsEnabled
+            }
+            applyHttpsServe(true) { ok ->
+                if (ok) return@applyHttpsServe
+                if (attempt >= ADB_SERVE_REPLAY_ATTEMPTS) {
+                    logManager.warn(TAG, "HTTPS replay gave up after ${attempt + 1} attempts")
+                    return@applyHttpsServe
+                }
+                replayScheduler.schedule(
+                    { replayHttpsServe(attempt + 1) },
+                    ADB_SERVE_REPLAY_DELAY_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS
+                )
+            }
+        }
+    }
+
+    /**
+     * Confirmation withdrawal for the HTTPS share, run once the replay ladder can
+     * no longer fire. Re-reads the opt-in first: the user may have re-enabled it
+     * meanwhile, and an unconditional withdrawal would kill that fresh enable.
+     */
+    private fun sweepWithdrawHttpsIfStillDisabled() {
+        isHttpsEnabled { enabledNow ->
+            if (!enabledNow) applyHttpsServe(false)
+        }
+    }
+
+    /**
+     * Persist the HTTPS opt-in and apply it when the tunnel is already up.
+     *
+     * Ordering mirrors saveAdbSettings and fails toward "not published": an
+     * enable is applied before it is persisted, a disable is persisted before it
+     * is applied.
+     */
+    fun saveHttpsSettings(enabled: Boolean, callback: ((Boolean) -> Unit)? = null) {
+        isTunnelRunning { running ->
+            if (!enabled) {
+                writeHttpsSentinel(false) { persisted ->
+                    if (!running) {
+                        callback?.invoke(persisted)
+                    } else {
+                        applyHttpsServe(false) { applied ->
+                            callback?.invoke(persisted && applied)
+                            // A replay attempt that read the sentinel just before
+                            // it flipped can still land after this withdrawal and
+                            // re-publish the share, leaving the switch reading OFF
+                            // with the URL live. Sweep once past the retry window
+                            // so it cannot outlive the toggle — same guard the ADB
+                            // path uses, and the same reason.
+                            replayScheduler.schedule(
+                                { sweepWithdrawHttpsIfStillDisabled() },
+                                ADB_SERVE_WITHDRAW_SWEEP_MS,
+                                java.util.concurrent.TimeUnit.MILLISECONDS
+                            )
+                        }
+                    }
+                }
+                return@isTunnelRunning
+            }
+            if (!running) {
+                // Nothing live to apply to — the sentinel is the whole state and
+                // launchTailscaleDaemon replays it on next start.
+                writeHttpsSentinel(true, callback)
+                return@isTunnelRunning
+            }
+            applyHttpsServe(true) { applied ->
+                if (!applied) {
+                    callback?.invoke(false)
+                    return@applyHttpsServe
+                }
+                writeHttpsSentinel(true) { persisted ->
+                    if (persisted) {
+                        callback?.invoke(true)
+                    } else {
+                        // Couldn't record the opt-in, so withdraw what was just
+                        // published: the UI reads the sentinel and would show OFF
+                        // with the share actually live.
+                        applyHttpsServe(false) { callback?.invoke(false) }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun writeHttpsSentinel(enabled: Boolean, callback: ((Boolean) -> Unit)?) {
+        adbShellExecutor.execute(
+            command = "mkdir -p $TAILSCALE_HOME && echo $enabled > $TAILSCALE_HTTPS_FILE && chmod 600 $TAILSCALE_HTTPS_FILE",
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    callback?.invoke(true)
+                }
+                override fun onError(error: String) {
+                    logManager.warn(TAG, "Failed to persist HTTPS setting: $error")
+                    callback?.invoke(false)
+                }
+            }
+        )
+    }
+
+    fun isHttpsEnabled(callback: ((Boolean) -> Unit)) {
+        adbShellExecutor.execute(
+            command = "cat $TAILSCALE_HTTPS_FILE 2>/dev/null",
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    callback(output.trim() == "true")
+                }
+                override fun onError(error: String) {
+                    callback(false)
                 }
             }
         )
@@ -588,22 +794,65 @@ class TailscaleLauncher(
         )
     }
 
+    /**
+     * The `https://<host>.<tailnet>.ts.net` URL currently serving the web port,
+     * or null when nothing is published.
+     *
+     * Read back from `serve status` rather than assembled from the MagicDNS
+     * name: that reports what tailscaled is ACTUALLY serving, so a stale
+     * sentinel, a share that failed to apply, or a tailnet without HTTPS
+     * certificates all resolve to null and fall back to the plain address
+     * instead of advertising a URL that answers nothing.
+     */
+    private fun resolveServedHttpsUrl(callback: (String?) -> Unit) {
+        isHttpsEnabled { httpsOn ->
+            if (!httpsOn) {
+                callback(null)
+                return@isHttpsEnabled
+            }
+            runTailscaleCommand(
+                cmd = "serve status",
+                callback = object : AdbShellExecutor.ShellCallback {
+                    override fun onSuccess(output: String) {
+                        // Only accept a share that proxies OUR port; the same
+                        // status output also lists the ADB --tcp forwarder.
+                        val servesHttpPort = output.contains(":$HTTP_PORT")
+                        val url = SERVED_HTTPS_URL.find(output)?.value
+                        callback(if (servesHttpPort) url else null)
+                    }
+                    override fun onError(error: String) = callback(null)
+                }
+            )
+        }
+    }
+
     fun getTunnelUrl(callback: (String?) -> Unit) {
         isTunnelRunning { isRunning ->
             needsLogin { needsLogin ->
                 if (isRunning && !needsLogin) {
-                    runTailscaleCommand(
-                        cmd = "ip --1",
-                        callback = object : AdbShellExecutor.ShellCallback {
-                            override fun onSuccess(output: String) {
-                                callback("http://${output.trim()}:8080")
-                            }
-
-                            override fun onError(error: String) {
-                                callback(null)
-                            }
+                    // Prefer the HTTPS share when it is published: same server,
+                    // but a secure context, which is what the web UI's camera, QR
+                    // pairing and service worker all require. Falls back to the
+                    // raw tailnet address whenever the share is not up, so the
+                    // URL never points at something that is not listening.
+                    resolveServedHttpsUrl { httpsUrl ->
+                        if (httpsUrl != null) {
+                            callback(httpsUrl)
+                            return@resolveServedHttpsUrl
                         }
-                    )
+                        runTailscaleCommand(
+                            cmd = "ip --1",
+                            callback = object : AdbShellExecutor.ShellCallback {
+                                override fun onSuccess(output: String) {
+                                    callback("http://${output.trim()}:$HTTP_PORT")
+                                }
+
+                                override fun onError(error: String) {
+                                    callback(null)
+                                }
+                            }
+                        )
+                    }
                 } else {
                     callback(null)
                 }

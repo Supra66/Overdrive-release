@@ -109,6 +109,15 @@ class TailscaleController(
         tailscaleLauncher.isAdbEnabled(callback)
     }
 
+    /** Publish the web UI over tailnet HTTPS — opt-in, gives it a secure context. */
+    fun saveHttpsSettings(enabled: Boolean, callback: ((Boolean) -> Unit)? = null) {
+        tailscaleLauncher.saveHttpsSettings(enabled, callback)
+    }
+
+    fun isHttpsEnabled(callback: ((Boolean) -> Unit)) {
+        tailscaleLauncher.isHttpsEnabled(callback)
+    }
+
     /** "100.x.y.z:5555" to paste into `adb connect`, or null when unavailable. */
     fun getAdbEndpoint(callback: (String?) -> Unit) {
         tailscaleLauncher.getAdbEndpoint(callback)
