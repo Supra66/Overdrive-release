@@ -392,17 +392,25 @@ class TailscaleLauncher(
             )
             return
         }
-        // Withdraw only the HTTPS share. Deliberately never `serve reset`, which
-        // would also drop the --tcp forwarder remote ADB depends on.
+        // Withdraw only the HTTPS share, and only the handler we created.
+        //
+        // Never `serve reset`: that drops the whole serve config including the
+        // --tcp forwarder remote ADB depends on.
+        //
+        // Scoped to --set-path=/ as well as the port, because `serve --bg $PORT`
+        // publishes at 443 on path / — so / is precisely what we own. Turning off
+        // 443 alone is a broader statement than we are entitled to make: anything
+        // else mounted under another path on 443 would go with it, and this runs
+        // on a head unit whose serve config we do not exclusively control.
         runTailscaleCommand(
-            cmd = "serve --https=443 off",
+            cmd = "serve --https=443 --set-path=/ off",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "web UI withdrawn from tailnet HTTPS")
                     callback?.invoke(true)
                 }
                 override fun onError(error: String) {
-                    logManager.warn(TAG, "serve --https=443 off failed: $error")
+                    logManager.warn(TAG, "serve --https=443 --set-path=/ off failed: $error")
                     callback?.invoke(false)
                 }
             }
