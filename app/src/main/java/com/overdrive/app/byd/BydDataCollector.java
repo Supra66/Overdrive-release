@@ -11618,14 +11618,46 @@ public class BydDataCollector {
      * then 2 (the reference tries both accepted "off" encodings, first that lands wins).
      * sendSetCommand returns true on a non-negative HAL result.
      */
+    /** AC_CTRL_MODE_SET values, from BYDAutoAcDevice.AC_CTRLMODE_AUTO / _MANUAL on Di 3.0. */
+    private static final int AC_CTRLMODE_AUTO = 0;
+    private static final int AC_CTRLMODE_MANUAL = 1;
+    /** AC_CTRL_SOURCE_SET value: attribute the write to the UI key, as a panel press would. */
+    private static final int AC_CTRL_SOURCE_UI_KEY = 0;
+
     public boolean setAcAutoMode(boolean on) {
         try {
-            if (on) {
-                return BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 1);
+            // Legacy single-id axis. Skipped entirely when unresolved rather than sending a
+            // literal, per the UNRESOLVED_ID contract — Di 3.0 has no auto-mode id under Ac.
+            if (BydFeatureIds.isResolved(BydFeatureIds.AC_AUTO_MODE_SET)) {
+                if (on) {
+                    if (BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 1)) return true;
+                } else {
+                    // Off: try 0 first, fall back to 2 (both are "off" per the OEM enum).
+                    if (BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 0)) return true;
+                    if (BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 2)) return true;
+                }
+                logger.debug("setAcAutoMode: legacy id write failed, trying the control-mode pair");
             }
-            // Off: try 0 first, fall back to 2 (both are "off" per the OEM enum).
-            if (BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 0)) return true;
-            return BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_AUTO_MODE_SET, 2);
+
+            /*
+             * Control-mode pair — what the OEM's own setAcControlMode does internally:
+             *
+             *     set(mDeviceType, {AC_CTRL_MODE_SET, AC_CTRL_SOURCE_SET}, {mode, setSource})
+             *
+             * Both ids go in ONE batch, in that order. Going through callSetBatch rather than the
+             * named method is deliberate and load-bearing: setAcControlMode opens with
+             * enforceCallingOrSelfPermission("android.permission.BYDAUTO_AC_SET"), which is
+             * protectionLevel=signature and is NOT granted to us (a Di 3.0 car grants only
+             * BYDAUTO_AC_COMMON). Verified on the vehicle from an app uid holding no BYD
+             * permissions: the named method and the public set(int[], BYDAutoEventValue) form both
+             * throw SecurityException, while this batch write returns 0.
+             */
+            int rc = BydDeviceHelper.callSetBatch(acDevice,
+                    new int[]{BydFeatureIds.AC_CTRL_MODE_SET, BydFeatureIds.AC_CTRL_SOURCE_SET},
+                    new int[]{on ? AC_CTRLMODE_AUTO : AC_CTRLMODE_MANUAL, AC_CTRL_SOURCE_UI_KEY});
+            if (rc >= 0) return true;
+            logger.debug("setAcAutoMode: control-mode pair write returned " + rc);
+            return false;
         } catch (Exception e) {
             logger.debug("setAcAutoMode failed: " + e.getMessage());
             return false;
