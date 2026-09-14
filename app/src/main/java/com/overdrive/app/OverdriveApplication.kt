@@ -33,6 +33,7 @@ class OverdriveApplication : Application() {
         // Apply the user-picked locale before any Activity/Fragment is created.
         // Auto-mode (or unset) writes an empty list so AppCompat falls back to
         // Locale.getDefault() — i.e. the BYD head unit's system language.
+        LocaleManager.attach(this)
         applyPersistedLocale()
 
         // Initialize LogConfig with app's cache directory for file logging
@@ -157,7 +158,7 @@ class OverdriveApplication : Application() {
             val locales = if (raw == null || raw == LocaleManager.AUTO_TAG) {
                 LocaleListCompat.getEmptyLocaleList()
             } else {
-                LocaleListCompat.forLanguageTags(raw)
+                LocaleListCompat.forLanguageTags(LocaleManager.androidLanguageTags(raw))
             }
             AppCompatDelegate.setApplicationLocales(locales)
         } catch (e: Exception) {

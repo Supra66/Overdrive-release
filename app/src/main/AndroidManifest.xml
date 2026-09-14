@@ -245,7 +245,19 @@
         android:persistent="true"
         android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config"
         android:usesCleartextTraffic="true">
+
+        <!-- Persist AppCompat per-app language on API 28–32. API 33+ uses
+             localeConfig + platform LocaleManager instead. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
 
         <!-- New Modern UI Activity -->
         <activity 

@@ -59,6 +59,22 @@ tasks.matching { it.name.contains("CMake") || it.name.contains("ExternalNative")
     dependsOn("downloadOpenH264", "downloadOpenCV", "downloadFastCam")
 }
 
+// Hebrew: Android/Java still match the legacy `iw` qualifier. AppCompat already
+// ships a sparse values-iw, which WINS over our values-he and leaves the UI
+// in English. Mirror values-he into a generated values-iw overlay.
+val hebrewIwResDir = layout.buildDirectory.dir("generated/res/iwAlias")
+val syncHebrewIwResources by tasks.registering(Copy::class) {
+    from("src/main/res/values-he")
+    into(hebrewIwResDir.map { it.dir("values-iw") })
+}
+tasks.configureEach {
+    if (name == "preBuild" || name.endsWith("PreBuild")
+        || (name.contains("Merge") && name.contains("Resources"))
+        || (name.startsWith("map") && name.contains("SourceSet"))) {
+        dependsOn(syncHebrewIwResources)
+    }
+}
+
 // OpenCV-mobile version for surveillance module (minimal build, ~3MB vs ~20MB)
 // https://github.com/nihui/opencv-mobile
 val opencvMobileVersion = "4.10.0"
@@ -286,6 +302,12 @@ android {
     }
     namespace = "com.overdrive.app"
     compileSdk = 36
+
+    sourceSets {
+        getByName("main") {
+            res.srcDir(hebrewIwResDir)
+        }
+    }
     buildToolsVersion = "36.0.0"
     ndkVersion = "26.1.10909125"
 

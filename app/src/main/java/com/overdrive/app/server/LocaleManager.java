@@ -43,7 +43,7 @@ public final class LocaleManager {
     /** All locales we ship translations for. en is the base. */
     public static final List<String> SUPPORTED = Arrays.asList(
             "en", "zh-CN", "zh-TW", "pt-BR", "es", "de", "fr", "it",
-            "nb", "nl", "ja", "ko", "th", "vi", "hi", "tr", "ru", "ar"
+            "nb", "nl", "ja", "ko", "th", "vi", "hi", "tr", "ru", "ar", "he"
     );
 
     private static final Set<String> SUPPORTED_SET = new HashSet<>(SUPPORTED);
@@ -66,7 +66,55 @@ public final class LocaleManager {
     private static volatile long cachedAt;
     private static final long CACHE_TTL_MS = 5_000L;
 
+    /**
+     * App-process Context for the private SharedPreferences fallback. The unified
+     * config lives at {@code /data/local/tmp/overdrive_config.json}, which the app
+     * UID cannot create on a phone (no shell daemon). Without this fallback the
+     * language picker looks like it stuck while {@link #getRaw()} is still null
+     * and the next cold start resets AppCompat to the system locale.
+     */
+    private static volatile android.content.Context appContext;
+    private static final String PREFS = "overdrive_locale";
+    private static final String PREF_KEY = "locale";
+
     private LocaleManager() {}
+
+    /** Bind the app process so locale survives on devices without the daemon. */
+    public static void attach(android.content.Context ctx) {
+        if (ctx != null) appContext = ctx.getApplicationContext();
+    }
+
+    /**
+     * Tags for {@code AppCompatDelegate.setApplicationLocales}. Hebrew must
+     * list both {@code he} (BCP-47) and {@code iw} (Java/Android legacy):
+     * AppCompat already ships a sparse {@code values-iw}, so a lone {@code iw}
+     * match skips our {@code values-he} strings and the UI stays English.
+     */
+    public static String androidLanguageTags(String tag) {
+        if ("he".equals(tag)) return "he,iw";
+        return tag;
+    }
+
+    private static void persistLocal(String tag) {
+        try {
+            android.content.Context ctx = appContext;
+            if (ctx == null) return;
+            ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+                    .edit().putString(PREF_KEY, tag).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private static String readLocal() {
+        try {
+            android.content.Context ctx = appContext;
+            if (ctx == null) return null;
+            String tag = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+                    .getString(PREF_KEY, null);
+            if (tag == null || tag.isEmpty()) return null;
+            if (AUTO_TAG.equals(tag) || isSupported(tag)) return tag;
+        } catch (Exception ignored) {}
+        return null;
+    }
 
     /**
      * One-shot import of any locale picked before this build. Idempotent —
@@ -115,6 +163,7 @@ public final class LocaleManager {
         if (lower.startsWith("zh-hant") || lower.equals("zh-tw") || lower.equals("zh-hk")) return "zh-TW";
         if (lower.startsWith("pt")) return "pt-BR";
         if (lower.startsWith("no") || lower.startsWith("nn")) return "nb";
+        if (lower.equals("iw") || lower.startsWith("iw-")) return "he";
         // Bare-language fallback
         int dash = lower.indexOf('-');
         String bare = dash > 0 ? lower.substring(0, dash) : lower;
@@ -148,12 +197,11 @@ public final class LocaleManager {
         try {
             JSONObject section = UnifiedConfigManager.getNativeShell();
             String tag = section.optString(K_LOCALE, "");
-            if (tag.isEmpty()) return null;
-            if (AUTO_TAG.equals(tag) || isSupported(tag)) return tag;
+            if (!tag.isEmpty() && (AUTO_TAG.equals(tag) || isSupported(tag))) return tag;
         } catch (Exception e) {
             CameraDaemon.log("LocaleManager.getRaw: " + e.getMessage());
         }
-        return null;
+        return readLocal();
     }
 
     /**
@@ -175,12 +223,13 @@ public final class LocaleManager {
             JSONObject delta = new JSONObject();
             delta.put(K_LOCALE, AUTO_TAG);
             UnifiedConfigManager.updateSection("nativeShell", delta);
-            cachedLocale = null;
-            cachedAt = 0L;
-            Messages.invalidate();
         } catch (Exception e) {
             CameraDaemon.log("LocaleManager.setAuto: " + e.getMessage());
         }
+        persistLocal(AUTO_TAG);
+        cachedLocale = null;
+        cachedAt = 0L;
+        Messages.invalidate();
     }
 
     /**
@@ -264,14 +313,15 @@ public final class LocaleManager {
             JSONObject delta = new JSONObject();
             delta.put(K_LOCALE, resolved);
             UnifiedConfigManager.updateSection("nativeShell", delta);
-            cachedLocale = resolved;
-            cachedAt = System.currentTimeMillis();
-            // Drop any cached Messages catalog so the next server-side
-            // i18n lookup loads the new locale's JSON.
-            Messages.invalidate();
         } catch (Exception e) {
             CameraDaemon.log("LocaleManager.set: " + e.getMessage());
         }
+        persistLocal(resolved);
+        cachedLocale = resolved;
+        cachedAt = System.currentTimeMillis();
+        // Drop any cached Messages catalog so the next server-side
+        // i18n lookup loads the new locale's JSON.
+        Messages.invalidate();
         return resolved;
     }
 }

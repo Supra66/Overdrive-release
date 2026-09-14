@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dashboard_modern_vehicle_status">מצב הרכב</string>
+    <string name="dashboard_modern_updating">מעדכן מצב רכב</string>
+    <string name="dashboard_modern_vehicle_unavailable">נתוני רכב לא זמינים</string>
+    <string name="dashboard_modern_vehicle_connected">הרכב מחובר</string>
+    <string name="dashboard_modern_battery">סוללה</string>
+    <string name="dashboard_modern_range">טווח משוער</string>
+    <string name="dashboard_modern_personalized_range">טווח מותאם</string>
+    <string name="dashboard_modern_vehicle_range">הערכת הרכב</string>
+    <string name="dashboard_modern_breakdown_ev">EV %1$d %2$s</string>
+    <string name="dashboard_modern_breakdown_fuel">דלק %1$d %2$s</string>
+    <string name="dashboard_modern_breakdown_fuel_pct">דלק %1$d %2$s (%3$.0f%%)</string>
+    <string name="dashboard_modern_percent">%1$.0f%%</string>
+    <string name="dashboard_modern_distance">%1$d %2$s</string>
+    <string name="dashboard_modern_charging">טעינה</string>
+    <string name="dashboard_modern_plugged_in">מחובר לחשמל</string>
+    <string name="dashboard_modern_charge_complete">הטעינה הושלמה</string>
+    <string name="dashboard_modern_charge_fault">הטעינה דורשת תשומת לב</string>
+    <string name="dashboard_modern_charge_power">%1$.1f kW</string>
+    <string name="dashboard_modern_charge_power_estimated">~%1$.1f kW</string>
+    <string name="dashboard_modern_charge_power_label">הספק</string>
+    <string name="dashboard_modern_charge_eta_label">זמן שנותר</string>
+    <string name="dashboard_modern_charge_session_label">בסשן הזה</string>
+    <string name="dashboard_modern_charge_session">%1$.1f kWh</string>
+    <string name="dashboard_modern_minutes">%1$d דק׳</string>
+    <string name="dashboard_modern_hours_minutes">%1$d שע׳ %2$d דק׳</string>
+    <string name="dashboard_modern_storage_summary">%1$s בשימוש · %2$s פנויים</string>
+    <string name="dashboard_modern_storage_unavailable">אחסון לא זמין</string>
+    <string name="dashboard_modern_clips_today">%1$d קליפים היום</string>
+    <string name="dashboard_modern_recordings_unavailable">הקלטות לא זמינות</string>
+    <string name="dashboard_modern_recent_activity">פעילות אחרונה</string>
+    <string name="dashboard_modern_activity_loading">טוען פעילות אחרונה</string>
+    <string name="dashboard_modern_no_activity">אין פעילות אחרונה</string>
+    <string name="dashboard_modern_activity_unavailable">פעילות אחרונה לא זמינה</string>
+    <string name="dashboard_ai_insight_kicker">תובנת AI</string>
+    <string name="dashboard_ai_insight_default_title">תקציר רכב</string>
+    <string name="dashboard_ai_insight_open">הצג תובנת AI מלאה</string>
+    <string name="dashboard_ai_insight_collapse">כווץ תובנת AI</string>
+    <string name="dashboard_modern_quick_actions">פעולות מהירות</string>
+    <string name="dashboard_modern_remote_details">פרטי חיבור</string>
+    <string name="dashboard_modern_expand_remote">הצג פרטי גישה מרחוק</string>
+    <string name="dashboard_modern_collapse_remote">הסתר פרטי גישה מרחוק</string>
+</resources>

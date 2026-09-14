@@ -24,7 +24,7 @@
         'en': 'EN', 'zh-CN': '中', 'zh-TW': '繁', 'pt-BR': 'PT', 'es': 'ES',
         'de': 'DE', 'fr': 'FR', 'it': 'IT', 'nb': 'NO', 'nl': 'NL',
         'ja': '日', 'ko': '한', 'th': 'ไทย', 'vi': 'VI', 'hi': 'हि', 'tr': 'TR',
-        'ru': 'РУ', 'ar': 'ع'
+        'ru': 'РУ', 'ar': 'ع', 'he': 'עב'
     };
 
     function shortLabel(lang) {
