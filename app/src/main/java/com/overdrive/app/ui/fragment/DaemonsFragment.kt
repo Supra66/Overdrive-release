@@ -459,6 +459,16 @@ class DaemonsFragment : Fragment() {
                 val msg = if (enabled) R.string.toast_tailscale_https_enabled
                           else R.string.toast_tailscale_https_disabled
                 Toast.makeText(ctx, getString(msg), Toast.LENGTH_SHORT).show()
+
+                // Push the URL through now that the share is live/withdrawn.
+                // getTunnelUrl prefers the served https:// URL and falls back to the
+                // plain tailnet address, so this flips the connect URL and the
+                // dashboard remote-access QR (which observes tunnelUrl) to match the
+                // new state at once. Without it the QR keeps showing the old scheme
+                // until the next ~30s daemon-status poll — and on enable that stale
+                // URL is plain HTTP, which lacks the secure context (camera, QR
+                // pairing, service worker) that HTTPS was turned on to provide.
+                daemonsViewModel.tailscaleController.refreshTunnelUrl()
             }
         }
     }
