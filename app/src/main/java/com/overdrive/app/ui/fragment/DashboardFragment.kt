@@ -1879,6 +1879,7 @@ class DashboardFragment : Fragment() {
             null -> "—"
             "seal" -> "BYD Seal"
             "atto3", "atto-3" -> "BYD Atto 3"
+            "atto3evo", "atto3-evo", "atto-3-evo" -> "BYD Atto 3 Evo"
             "atto2", "atto-2" -> "BYD Atto 2"
             "atto1", "atto-1" -> "BYD Atto 1"
             "han" -> "BYD Han"

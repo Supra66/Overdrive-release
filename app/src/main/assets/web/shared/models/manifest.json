@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "default": "seal",
   "baseUrl": "https://github.com/yash-srivastava/Overdrive-release/releases/download/models-v1/",
   "batteryChemistryDefinitions": {
@@ -146,6 +146,25 @@
         "verifiedOn": "2026-08-02"
       },
       "nominalKwh": 60.48
+    },
+    {
+      "id": "atto3-evo",
+      "name": "BYD Atto 3 Evo",
+      "file": "atto3-evo.glb",
+      "sizeBytes": 1606272,
+      "sha256": "1d28681aa2d0ca0dd90d5ac5c2cdc788d976fe1c004ffde837bbd86a1e70f486",
+      "bundled": false,
+      "paintMeshHint": "body",
+      "batteryChemistry": "lfp",
+      "batteryChemistryEvidence": {
+        "authority": "BYD",
+        "technology": "blade",
+        "nominalKwh": 74.8,
+        "configuration": "European Comfort and Design 74.8 kWh Blade Battery",
+        "sourceUrl": "https://media.byd.com/byd-launches-the-new-atto-3-evo-in-europe-more-range-more-power-and-more-technology/?lang=eng",
+        "verifiedOn": "2026-09-15"
+      },
+      "nominalKwh": 74.8
     },
     {
       "id": "atto2",

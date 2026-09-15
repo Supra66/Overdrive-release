@@ -22,6 +22,7 @@ object VehicleArt {
         "sealu", "sealudmi" -> R.drawable.vehicle_seal_u
         "dolphin" -> R.drawable.vehicle_dolphin
         "atto3" -> R.drawable.vehicle_atto3
+        "atto3evo" -> R.drawable.vehicle_atto3_evo
         "atto2" -> R.drawable.vehicle_atto2
         "han" -> R.drawable.vehicle_han
         "tang" -> R.drawable.vehicle_tang
