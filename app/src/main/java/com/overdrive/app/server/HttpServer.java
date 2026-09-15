@@ -1687,10 +1687,10 @@ public class HttpServer {
                 if (cached != null) {
                     file = cached;
                 } else {
-                    return false;
+                    return serveAssetFallback(out, relativePath, ifNoneMatch);
                 }
             } else {
-                return false;
+                return serveAssetFallback(out, relativePath, ifNoneMatch);
             }
         }
         
@@ -1765,6 +1765,56 @@ public class HttpServer {
             
         } catch (Exception e) {
             CameraDaemon.log("Static file error: " + relativePath + " - " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * APK asset fallback when the extracted copy under WEB_ROOT is missing.
+     * Phone installs can't write {@code /data/local/tmp/web}; a car daemon
+     * can also be running a stale extract after an APK update. Only i18n
+     * catalogs — everything else still requires a real extract.
+     */
+    private boolean serveAssetFallback(OutputStream out, String relativePath, String ifNoneMatch) {
+        if (relativePath == null || !relativePath.startsWith("i18n/") || !relativePath.endsWith(".json")) {
+            return false;
+        }
+        String tag = relativePath.substring("i18n/".length());
+        int dot = tag.lastIndexOf('.');
+        String base = dot > 0 ? tag.substring(0, dot) : tag;
+        base = LocaleManager.resolve(base);
+        if (!LocaleManager.isSupported(base)) return false;
+
+        android.content.Context ctx = com.overdrive.app.daemon.DaemonBootstrap.getContext();
+        if (ctx == null || ctx.getAssets() == null) return false;
+        try (java.io.InputStream in = ctx.getAssets().open("web/i18n/" + base + ".json")) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            byte[] data = bos.toByteArray();
+            String cacheControl = "public, max-age=3600, must-revalidate";
+            String etag = "\"" + Integer.toHexString(data.length)
+                    + "-" + Integer.toHexString(base.hashCode()) + "\"";
+            if (ifNoneMatch != null && etag.equals(ifNoneMatch.trim())) {
+                out.write(("HTTP/1.1 304 Not Modified\r\n"
+                        + "ETag: " + etag + "\r\n"
+                        + "Cache-Control: " + cacheControl + "\r\n"
+                        + "Connection: close\r\n\r\n").getBytes());
+                out.flush();
+                return true;
+            }
+            String headers = "HTTP/1.1 200 OK\r\n"
+                    + "Content-Type: application/json; charset=utf-8\r\n"
+                    + "Content-Length: " + data.length + "\r\n"
+                    + "ETag: " + etag + "\r\n"
+                    + "Cache-Control: " + cacheControl + "\r\n"
+                    + "Connection: close\r\n\r\n";
+            out.write(headers.getBytes("UTF-8"));
+            out.write(data);
+            out.flush();
+            return true;
+        } catch (Exception e) {
             return false;
         }
     }

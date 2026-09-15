@@ -20,7 +20,7 @@ import com.overdrive.app.server.LocaleManager
  * Language picker rendered as a real M3 [BottomSheetDialog].
  *
  *   - "Auto (follow system)" pinned at the top
- *   - 17 supported languages in native script with BCP-47 tag on the right
+ *   - Supported languages in native script with BCP-47 tag on the right
  *   - Current pick gets a check mark on the trailing side
  *   - Selection persists via [LocaleManager] so the WebView and the native UI
  *     come back in the same language on the very next launch
@@ -52,7 +52,8 @@ object LanguagePickerDialog {
         "hi" to "हिन्दी",
         "tr" to "Türkçe",
         "ru" to "Русский",
-        "ar" to "العربية"
+        "ar" to "العربية",
+        "he" to "עברית"
     )
 
     @JvmOverloads
@@ -127,7 +128,9 @@ object LanguagePickerDialog {
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
         } else {
             LocaleManager.set(tag)
-            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
+            AppCompatDelegate.setApplicationLocales(
+                LocaleListCompat.forLanguageTags(LocaleManager.androidLanguageTags(tag))
+            )
         }
         // The activity recreate above rehydrates Fragments in the new language, but a
         // running foreground Service (the RoadSense overlay) doesn't get a per-app

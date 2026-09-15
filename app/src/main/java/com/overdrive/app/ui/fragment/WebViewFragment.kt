@@ -547,6 +547,10 @@ class WebViewFragment : Fragment() {
                     // FILTER: Only intercept our local server and external map/CDN resources
                     val isLocalServer = url.contains("127.0.0.1:${CameraDaemon.HTTP_PORT}") ||
                         url.contains("localhost:${CameraDaemon.HTTP_PORT}")
+
+                    if (isLocalServer) {
+                        interceptI18nCatalog(url)?.let { return it }
+                    }
                     
                     // Bypass proxy for map tiles and CDN resources (sing-box proxy blocks these)
                     val isMapTile = url.contains("tile.openstreetmap.de") ||
@@ -1256,6 +1260,18 @@ class WebViewFragment : Fragment() {
         }
 
         /**
+         * Return the APK's web i18n catalog JSON for `lang`. The in-app
+         * WebView uses this when `/i18n/<lang>.json` can't be fetched from
+         * the daemon (phone without UID 2000, or stale extract under
+         * `/data/local/tmp/web/i18n`). Empty string on miss so JS falls
+         * through to HTTP.
+         */
+        @android.webkit.JavascriptInterface
+        fun getI18nCatalog(lang: String?): String {
+            return loadI18nCatalogJson(lang)
+        }
+
+        /**
          * Arm/disarm the NATIVE blind-spot lane to match the just-saved
          * blindspot.enabled (or debugPreview) flag, without waiting for the next
          * activity onResume. The RoadSense web tab calls this after toggling so the
@@ -1763,6 +1779,47 @@ class WebViewFragment : Fragment() {
             "document.documentElement.setAttribute('data-theme','$safe');",
             null
         )
+    }
+
+    /**
+     * APK-bundled web catalog (`assets/web/i18n/<lang>.json`). Used by the
+     * JS bridge and by {@link #interceptI18nCatalog} so Hebrew (and every
+     * other locale) does not depend on the daemon having extracted files
+     * into `/data/local/tmp/web/i18n`.
+     */
+    private fun loadI18nCatalogJson(lang: String?): String {
+        val raw = lang?.trim().orEmpty()
+        if (raw.isEmpty()) return ""
+        val tag = com.overdrive.app.server.LocaleManager.resolve(raw)
+        if (!com.overdrive.app.server.LocaleManager.isSupported(tag)) return ""
+        val ctx = context ?: return ""
+        return try {
+            ctx.assets.open("web/i18n/$tag.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun interceptI18nCatalog(url: String): WebResourceResponse? {
+        val path = android.net.Uri.parse(url).path ?: return null
+        if (!path.startsWith("/i18n/") || !path.endsWith(".json")) return null
+        val file = path.substringAfter("/i18n/")
+        if (file.contains('/') || file.contains("..")) return null
+        val json = loadI18nCatalogJson(file.removeSuffix(".json"))
+        if (json.isEmpty()) return null
+        val bytes = json.toByteArray(Charsets.UTF_8)
+        val resp = WebResourceResponse(
+            "application/json",
+            "utf-8",
+            java.io.ByteArrayInputStream(bytes)
+        )
+        resp.setStatusCodeAndReasonPhrase(200, "OK")
+        resp.responseHeaders = mapOf(
+            "Cache-Control" to "no-store",
+            "Access-Control-Allow-Origin" to "*",
+            "Content-Length" to bytes.size.toString()
+        )
+        return resp
     }
 
     /**
