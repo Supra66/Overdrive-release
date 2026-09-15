@@ -23,6 +23,13 @@ class TailscaleLauncher(
         private const val TAILSCALE_PATH = "$TAILSCALE_HOME/tailscale"
         private const val TAILSCALED_PATH = "$TAILSCALE_HOME/tailscaled"
 
+        // Records the app versionCode the deployed binary was copied from, so an app
+        // update that ships a new libtailscale.so actually redeploys it. Without this,
+        // checkAndInstallTailscale only ever reinstalled when the binary was missing —
+        // so an existing install kept its old binary forever, and shipped fixes (e.g.
+        // the ACME-enabled rebuild) silently never reached updating users.
+        private const val TAILSCALE_VERSION_FILE = "$TAILSCALE_HOME/installed_version"
+
         private const val TAILSCALE_COMMUNICATION_PORT = "8532"
 
         private const val TAILSCALE_PROXY_FILE = "$TAILSCALE_HOME/proxy_enabled"
@@ -154,9 +161,25 @@ class TailscaleLauncher(
         )
     }
 
+    /** App versionCode the currently-shipped libtailscale.so belongs to, or -1 if unknown. */
+    private fun appVersionCode(): Long =
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+        } catch (e: Exception) {
+            -1L
+        }
+
     private fun checkAndInstallTailscale(callback: TailscaleCallback, onComplete: () -> Unit) {
+        // Reinstall when the binary is missing/non-executable OR when the deployed copy
+        // predates the current app version. The version stamp is the load-bearing part:
+        // without it this only checked existence, so an app update that ships a new
+        // libtailscale.so never redeployed for users who already had it set up — the old
+        // binary passed the exec test and was kept. That is exactly how the ACME-enabled
+        // rebuild failed to reach updating cars: the pre-update no-ACME binary stayed.
+        val want = appVersionCode()
         adbShellExecutor.execute(
-            command = "test -x $TAILSCALE_PATH && test -x $TAILSCALED_PATH",
+            command = "test -x $TAILSCALE_PATH && test -x $TAILSCALED_PATH && " +
+                "[ \"\$(cat $TAILSCALE_VERSION_FILE 2>/dev/null)\" = \"$want\" ]",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     onComplete()
@@ -172,11 +195,18 @@ class TailscaleLauncher(
     private fun installTailscale(callback: TailscaleCallback, onComplete: () -> Unit) {
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
         val srcPath = "$nativeLibDir/libtailscale.so"
+        val want = appVersionCode()
 
         callback.onLog("Installing tailscale...")
 
+        // cp -f / ln -sf so a redeploy over an older install succeeds (plain `ln -s`
+        // fails when tailscaled already exists). This path only runs while the tunnel is
+        // stopped, so overwriting the binary is safe. The version stamp is written LAST,
+        // so a partial copy is never recorded as installed and is retried next launch.
         adbShellExecutor.execute(
-            command = "test -f $srcPath && mkdir -p $TAILSCALE_HOME && cp $srcPath $TAILSCALE_PATH && ln -s $TAILSCALE_PATH $TAILSCALED_PATH && chmod +x $TAILSCALE_PATH",
+            command = "test -f $srcPath && mkdir -p $TAILSCALE_HOME && cp -f $srcPath $TAILSCALE_PATH && " +
+                "ln -sf $TAILSCALE_PATH $TAILSCALED_PATH && chmod +x $TAILSCALE_PATH && " +
+                "echo $want > $TAILSCALE_VERSION_FILE",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     callback.onLog("Tailscale installed")
